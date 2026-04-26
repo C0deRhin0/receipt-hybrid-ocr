@@ -1,0 +1,32 @@
+{
+  "name": "receipt-hybrid-ocr",
+  "version": "1.0.0",
+  "description": "Node.js + Vite React project with Express server for Claude Vision API",
+  "author": "NuecAI",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "bash scripts/start.sh",
+    "stop": "bash scripts/stop.sh",
+    "status": "bash scripts/status.sh",
+    "lint": "eslint . --ext js,jsx,ts,tsx",
+    "lint:fix": "eslint . --ext js,jsx,ts,tsx --fix"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "cors": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "googleapis": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "eslint": "latest",
+    "eslint-plugin-react": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "vite": "latest"
+  }
+}
