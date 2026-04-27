@@ -22,10 +22,11 @@
 
 ### Features
 
-- **Hybrid routing** — Switch between Claude Vision (cloud) and Moondream (local)
-- **Secure mode (default)** — Process receipts entirely offline with local AI
+- **Hybrid routing** — Switch between Claude Vision (cloud) and Local pipeline (tesseract.js + local LLM)
+- **Secure mode (default)** — Process receipts entirely offline using local OCR and AI structuring
+- **Raw OCR & Structured Data** — Toggle between raw extracted text and AI-parsed JSON data
+- **Enhanced UI** — Features a receipt preview image, processing overlay during extraction, and dark-first design
 - **One-click export** — Download as CSV or push directly to Google Sheets
-- **Dark-first UI** — Designed for demo environments and low-light conditions
 - **Local LAN Deployment** — Self-hosted Express server accessible across your local network
 - **HTTPS enabled** — Camera access works on external devices (phones/tablets)
 
@@ -44,7 +45,8 @@
                     │                                          │
                     │       ┌─────────────┐    ┌──────────┐    │
                     │       │ Secure Mode │    │  Cloud   │    │
-                    │       │ (Ollama)    │──▶ │ (Claude) │    │
+                    │       │ (tesseract +│──▶ │ (Claude  │    │
+                    │       │ local LLM)  │    │  Vision) │    │
                     │       └─────────────┘    └──────────┘    │
                     └───────────────────┬──────────────────────┘
                                         │
@@ -78,8 +80,8 @@ npm run start
 > **Note:** Port 5001 is used because port 5000 may be occupied by other services.
 
 See [USAGE.md](./USAGE.md) for full setup including:
-- Environment variables
-- Ollama + Moondream setup (Secure Mode)
+- Environment variables (including `OLLAMA_TEXT_MODEL` for local parsing)
+- Local OCR + LLM setup (Secure Mode)
 - Google Sheets OAuth configuration
 
 ---
@@ -92,7 +94,8 @@ See [USAGE.md](./USAGE.md) for full setup including:
 | Backend | Node.js + Express |
 | Styling | Tailwind CSS (dark-first) |
 | Cloud AI | Claude Vision API |
-| Local AI | Moondream via Ollama |
+| Local OCR | Tesseract.js |
+| Local AI | Ollama (local text model, e.g., llama3.2) |
 | CI/CD | GitHub Actions |
 
 ---
@@ -101,13 +104,13 @@ See [USAGE.md](./USAGE.md) for full setup including:
 
 | Feature | Secure Mode (Default) | Cloud Mode |
 |---------|----------------------|------------|
-| Processing | Local (Ollama) | Cloud (Claude) |
+| Processing | Local (Tesseract + Ollama) | Cloud (Claude) |
 | Internet required | No | Yes |
 | Privacy | 100% offline | Data sent to Claude |
-| Speed | ~10-15 sec | ~3-5 sec |
-| Accuracy | ~60-70% | ~95%+ |
+| Speed | ~5-15 sec | ~3-5 sec |
+| Accuracy | ~70-80% | ~95%+ |
 | API key needed | No | Yes |
-| Model | Moondream (1B) | Claude Vision |
+| Model | Tesseract.js + `OLLAMA_TEXT_MODEL` | Claude Vision |
 
 ---
 
