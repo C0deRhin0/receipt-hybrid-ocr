@@ -39,6 +39,7 @@ The server runs on **HTTPS by default** (for camera access on external devices).
 | `ANTHROPIC_API_KEY` | Optional | - | Claude Vision API key (cloud mode) |
 | `ANTHROPIC_API_BASE_URL` | Optional | anthropic.com | Custom API endpoint (for company APIs) |
 | `OLLAMA_BASE_URL` | No | http://localhost:11434 | Ollama server URL |
+| `OLLAMA_TEXT_MODEL` | No | llama3.2 | The local LLM used to structure OCR text |
 | `GOOGLE_SHEETS_CREDENTIALS` | Optional | - | Service account JSON |
 | `GOOGLE_SHEET_ID` | Optional | - | Target spreadsheet ID |
 
@@ -71,9 +72,9 @@ Cloud Mode:   ⚠️ Add API key to .env.local
 Secure Mode: Ollama @ http://localhost:11434
 ```
 
-## 5. Secure Mode (Default - Local OCR)
+## 5. Secure Mode (Default - Local OCR & LLM Structuring)
 
-The app defaults to **Secure Mode** using local Ollama for privacy. No internet required after model is downloaded.
+The app defaults to **Secure Mode** using local processing for privacy. No internet required after models are downloaded. The pipeline first extracts raw text using **tesseract.js**, then uses a local Ollama model (configured via `OLLAMA_TEXT_MODEL`) to structure the data into JSON.
 
 ### Install Ollama:
 
@@ -85,14 +86,13 @@ brew install ollama
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-### Install Vision Model:
+### Install the Text Model:
 
 ```bash
-# Recommended: Lightweight model for OCR (~1.7GB)
-ollama pull moondream
+# Recommended text model for structuring OCR data
+ollama pull llama3.2
 
-# Alternative: larger but more capable
-ollama pull llava
+# You can use a different model by setting OLLAMA_TEXT_MODEL in .env.local
 ```
 
 ### Start Ollama (if not auto-started):
@@ -101,7 +101,7 @@ ollama pull llava
 ollama serve
 ```
 
-**Note:** The app automatically detects and uses your vision model. Processing takes ~10-15 seconds on first run (model loading), then ~3-5 seconds subsequent runs.
+**Note:** The app will handle OCR locally using Tesseract and structure the text using your specified Ollama model. Processing typically takes ~5-15 seconds.
 
 ### Fallback Behavior
 
@@ -163,9 +163,10 @@ GOOGLE_SHEET_ID=your-sheet-id
 1. Open app at `https://localhost:5001` (or network URL)
 2. **Toggle Mode:** Click the lock icon (Secure/Local) or cloud icon (Cloud)
 3. **Capture:** Use camera button or upload receipt image
-4. **Wait:** Processing indicator shows (~10-15 sec for local, ~3-5 sec for cloud)
-5. **View:** Parsed data appears in table format
-6. **Export:** Download CSV or push to Google Sheets
+4. **Wait:** A processing overlay will appear over the preview image (~5-15 sec for local, ~3-5 sec for cloud)
+5. **View Data:** The parsed data appears in the Parsed Data panel
+6. **Toggle Structured/Raw:** Switch between AI-structured JSON tables or Raw OCR text extraction
+7. **Export:** Download CSV or push to Google Sheets
 
 ### Mode Indicator
 
@@ -183,8 +184,8 @@ Your mode preference is saved between sessions.
 
 ### "Secure Mode timeout"
 - Ensure Ollama is running: `ollama serve`
-- Check model is installed: `ollama list`
-- Try: `ollama pull moondream`
+- Check text model is installed: `ollama list`
+- Try: `ollama pull llama3.2` or verify your `OLLAMA_TEXT_MODEL` value.
 
 ### "Cloud Mode not working"
 - Verify API key in `.env.local`
@@ -196,15 +197,12 @@ Your mode preference is saved between sessions.
 - Change port in `.env.local`: `PORT=5002`
 
 ### "Extraction shows empty or wrong data"
-- **Secure Mode (Local)**: Moondream is a lightweight model (~1GB). Complex receipts may not parse correctly.
-  - Try using clearer receipt images
-  - Switch to Cloud Mode for better accuracy
+- **Secure Mode (Local)**: Ensure the receipt is clear. Tesseract.js may struggle with poor lighting, meaning the LLM gets bad input text. Toggle to **Raw OCR** to see exactly what text the LLM received.
 - **Cloud Mode**: Ensure your API key is valid and has sufficient credits
 
 ### "Fallback to raw text displayed"
-When the AI cannot extract structured data, the UI will show:
-- A "Could not parse structured data" message
-- Raw extracted text (if available)
+When the AI cannot extract structured data, you can toggle the UI to show:
+- The raw extracted text from the OCR pass (useful for debugging)
 
 This typically happens with:
 - Very complex receipt layouts
@@ -213,9 +211,9 @@ This typically happens with:
 
 ## 11. Accuracy Comparison
 
-| Mode | Model | Accuracy | Speed | Internet Required |
+| Mode | Model Pipeline | Accuracy | Speed | Internet Required |
 |------|-------|----------|-------|-------------------|
-| Secure | Moondream (1B) | ~60-70% | ~10-15s | No |
+| Secure | Tesseract + Llama3.2 | ~70-80% | ~5-15s | No |
 | Cloud | Claude Vision | ~95%+ | ~3-5s | Yes |
 
 ### Tips for Better Results
