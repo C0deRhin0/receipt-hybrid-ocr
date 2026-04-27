@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { extractWithClaude } = require('../lib/claudeVision');
-const { extractWithOllama } = require('../lib/ollamaLocal');
+const { parseReceiptText, extractWithOllamaFromText, filterExtractionByOcr, createFallbackData, normalizeReceiptData } = require('../lib/ollamaLocal');
+const { extractTextFromImage } = require('../lib/ocr');
 
 // Request timeout - 300 seconds max (Local models can take several minutes)
 const REQUEST_TIMEOUT = 300000;
@@ -16,6 +17,14 @@ router.post('/', async (req, res) => {
   }, REQUEST_TIMEOUT);
 
   try {
+    if (!req.is('application/json')) {
+      clearTimeout(timeoutId);
+      return res.status(415).json({
+        error: 'Unsupported content type',
+        details: 'Expected application/json with imageBase64.'
+      });
+    }
+
     const { imageBase64, mode } = req.body;
 
     if (!imageBase64) {
@@ -25,6 +34,17 @@ router.post('/', async (req, res) => {
 
     let extractionResult;
     let lastError = null;
+
+    let ocrText = '';
+    try {
+      ocrText = await extractTextFromImage(imageBase64);
+      if (!ocrText || ocrText.trim().length === 0) {
+        throw new Error('OCR returned empty text');
+      }
+    } catch (err) {
+      console.error('OCR Error:', err.message);
+      ocrText = '';
+    }
 
     // Determine mode - default to secure (local) if not specified
     const effectiveMode = mode || 'secure';
@@ -45,8 +65,12 @@ router.post('/', async (req, res) => {
         lastError = err;
         // Try secure as fallback if cloud fails
         try {
-          extractionResult = await extractWithOllama(imageBase64);
+          if (!ocrText || ocrText.trim().length === 0) {
+            throw new Error('OCR text unavailable for secure fallback');
+          }
+          extractionResult = await extractWithOllamaFromText(ocrText);
         } catch (err2) {
+          console.error('Fallback extraction also failed:', err2.message);
           clearTimeout(timeoutId);
           throw lastError;
         }
@@ -54,7 +78,10 @@ router.post('/', async (req, res) => {
     } else {
       // Secure mode (default)
       try {
-        extractionResult = await extractWithOllama(imageBase64);
+        if (!ocrText || ocrText.trim().length === 0) {
+          throw new Error('OCR returned empty text');
+        }
+        extractionResult = await extractWithOllamaFromText(ocrText);
       } catch (err) {
         lastError = err;
         // Try cloud as fallback if secure fails
@@ -62,29 +89,50 @@ router.post('/', async (req, res) => {
           try {
             extractionResult = await extractWithClaude(imageBase64);
           } catch (err2) {
+            console.error('Fallback extraction also failed:', err2.message);
             clearTimeout(timeoutId);
             throw lastError;
           }
         } else {
-          clearTimeout(timeoutId);
-          throw lastError;
+          // If no cloud fallback, return OCR-only fallback
+          extractionResult = parseReceiptText(ocrText || '');
         }
       }
     }
 
     clearTimeout(timeoutId);
-    if (!res.headersSent && !timeoutFired) {
-      res.json(extractionResult);
+    if (timeoutFired || res.headersSent) {
+      return;
     }
+
+    // Final normalization pass for safety
+    if (typeof extractionResult === 'string') {
+      extractionResult = normalizeReceiptData(extractionResult, ocrText);
+    }
+
+    if (!extractionResult || typeof extractionResult !== 'object') {
+      extractionResult = createFallbackData(ocrText || '');
+    }
+
+    extractionResult.rawText = ocrText || '';
+    extractionResult.rawTextLines = (ocrText || '').split('\n').map(line => line.trim()).filter(Boolean);
+
+    if (ocrText && extractionResult && typeof extractionResult === 'object') {
+      extractionResult = filterExtractionByOcr(extractionResult, ocrText);
+    }
+
+    return res.json(extractionResult);
   } catch (error) {
     clearTimeout(timeoutId);
-    console.error('Extraction Error:', error.message);
-    if (!res.headersSent && !timeoutFired) {
-      res.status(500).json({ 
-        error: 'Failed to extract receipt data', 
-        details: error.message 
-      });
+    if (timeoutFired || res.headersSent) {
+      return;
     }
+
+    console.error('Extraction Error:', error.message);
+    return res.status(500).json({ 
+      error: 'Failed to extract receipt data', 
+      details: error.message 
+    });
   }
 });
 
