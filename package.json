@@ -19,6 +19,7 @@
     "dotenv": "latest",
     "express": "latest",
     "googleapis": "latest",
+    "tesseract.js": "latest",
     "react": "latest",
     "react-dom": "latest"
   },
