@@ -11,6 +11,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
   const [error, setError] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
 
   // Load saved mode on mount
   useEffect(() => {
@@ -27,6 +28,7 @@ function App() {
     // Clear previous results when switching modes
     setReceiptData(null);
     setError(null);
+    setPreviewImage(null);
   };
 
   // Process image
@@ -34,6 +36,7 @@ function App() {
     setIsLoading(true);
     setError(null);
     setReceiptData(null);
+    setPreviewImage(dataUrl);
     
     try {
       const base64 = encodeBase64(dataUrl);
@@ -62,6 +65,12 @@ function App() {
     }
   };
 
+  const handleReset = () => {
+    setReceiptData(null);
+    setError(null);
+    setPreviewImage(null);
+  };
+
   return (
     <div className="app-container">
       <header style={{ 
@@ -78,7 +87,12 @@ function App() {
       
       <main className="app-main">
         <div className="panel-left" style={{ flex: 1 }}>
-          <CapturePanel onCapture={processImage} isLoading={isLoading} />
+          <CapturePanel
+            onCapture={processImage}
+            isLoading={isLoading}
+            previewImage={previewImage}
+            onReset={handleReset}
+          />
         </div>
         
         <div className="panel-right" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -98,7 +112,29 @@ function App() {
               </div>
             )}
             
-            <ResultsTable data={receiptData} />
+            <div style={{ position: 'relative', flex: 1 }}>
+              <ResultsTable data={receiptData} isLoading={isLoading} />
+              {isLoading && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexDirection: 'column',
+                    gap: '16px',
+                    backgroundColor: 'rgba(13, 17, 23, 0.7)',
+                    borderRadius: '8px',
+                    opacity: isLoading ? 1 : 0,
+                    transition: 'opacity 200ms ease'
+                  }}
+                >
+                  <div className="spinner"></div>
+                  <div style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>Processing Image...</div>
+                </div>
+              )}
+            </div>
             <ExportBar data={receiptData} disabled={!receiptData || isLoading} />
           </div>
         </div>
