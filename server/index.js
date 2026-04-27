@@ -12,7 +12,7 @@ const sheetsRoute = require('./routes/sheets');
 require('dotenv').config({ path: path.join(__dirname, '../.env.local') });
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 const HOST = process.env.HOST || '0.0.0.0';
 
 // Enable CORS for all origins
