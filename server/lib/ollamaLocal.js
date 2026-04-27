@@ -1,22 +1,46 @@
 const http = require('http');
 
-const PROMPT = `You are a receipt data extraction system. Look at the receipt image and extract ALL the data you can see.
+const DEFAULT_TEXT_MODEL = process.env.OLLAMA_TEXT_MODEL || 'llama3.2:3b';
 
-IMPORTANT:
-1. Extract ACTUAL values you see in the image - do NOT make up data.
-2. Extract all key-value pairs you can identify. Do NOT use a fixed schema. Name the keys based on what is on the receipt (e.g. "Merchant", "Date", "Tax ID", "Subtotal", "Total").
-3. If there is a list of items purchased, extract them as an array of objects under an 'items' key.
-4. Return ONLY valid JSON - no explanations.
+const PROMPT = `You are a receipt data extraction system.
+You will be given OCR text from a receipt image.
 
-Output format should be purely dynamic JSON, for example:
+CRITICAL RULES:
+1. Extract ONLY values that appear in the OCR text. Do NOT make up data.
+2. Preserve original labels/fields when present (e.g., "P.IVA", "TEL.").
+3. Also normalize common fields when clear:
+   - vendorName, date, time, total, subtotal, vat, tax, pieces
+4. If the text does not clearly contain line items, do NOT invent them. Leave items as an empty array.
+5. For each OCR line, attempt to map it to a logical category:
+   - vendorName (top of receipt / header)
+   - contact (phone, address)
+   - tax (VAT / tax ID)
+   - totals (subtotal, total, tax)
+   - meta (operator, register, receipt id, etc.)
+   Place these in a "sections" object with arrays of lines.
+6. If something is unclear, keep it in a generic "fields" object with key/value pairs exactly as seen.
+7. Return ONLY valid JSON. No explanations, no markdown.
+
+Output format example (dynamic JSON):
 {
-  "Merchant": "Store Name",
-  "Date": "2023-01-01",
-  "Any Other Field": "value",
-  "items": [
-    { "Description": "Item 1", "Quantity": 1, "Price": 5.00 }
-  ],
-  "Total": 5.50
+  "vendorName": "Store Name",
+  "date": "2023-01-01",
+  "time": "14:24",
+  "total": "449.00",
+  "P.IVA": "04133250961",
+  "TEL": "0257505142",
+  "items": [],
+  "sections": {
+    "header": ["Store Name", "Address line"],
+    "contact": ["TEL. ..."],
+    "tax": ["P.IVA ..."],
+    "totals": ["TOTALE ..."],
+    "meta": ["OP. 1 0000", "REPO! 449,00"]
+  },
+  "fields": {
+    "OP.": "1",
+    "REP01": "0000"
+  }
 }`;
 
 // Use localhost:11434
@@ -61,41 +85,77 @@ function ollamaRequest(endpoint, data, timeout = 60000) {
  * Normalize and validate the extracted data
  */
 function normalizeReceiptData(rawData, fallbackText = '') {
+  // If already an object/array, return after normalization
+  if (rawData && typeof rawData === 'object') {
+    return normalizeParsedData(rawData);
+  }
+
   // If already a string (JSON string), try to parse it
   let data = null;
-  
+
   if (typeof rawData === 'string') {
     // First try: direct parse
     try {
       data = JSON.parse(rawData);
       if (data && typeof data === 'object') {
-        return data;
+        return normalizeParsedData(data);
       }
     } catch (e) {
       // Continue to try extraction
     }
-    
+
     // Second try: extract JSON object from string
     const jsonStr = extractJsonObject(rawData);
     if (jsonStr) {
       try {
         data = JSON.parse(jsonStr);
+        return normalizeParsedData(data);
       } catch (e) {
-        console.log('Failed to parse extracted JSON:', e.message);
+        console.log('Failed to parse extracted JSON object:', e.message);
+      }
+    }
+
+    // Third try: extract JSON array from string
+    const jsonArrayStr = extractJsonArray(rawData);
+    if (jsonArrayStr) {
+      try {
+        data = JSON.parse(jsonArrayStr);
+        return normalizeParsedData(data);
+      } catch (e) {
+        console.log('Failed to parse extracted JSON array:', e.message);
       }
     }
   }
-  
-  // If we have valid data object, return it
-  if (data && typeof data === 'object') {
-    return data;
-  }
-  
+
   // Ultimate fallback: create from raw text
   return {
     rawExtraction: fallbackText || rawData,
     error: "Could not parse JSON"
   };
+}
+
+/**
+ * Normalize parsed data (object or array)
+ */
+function normalizeParsedData(data) {
+  if (Array.isArray(data)) {
+    // If array of objects, pick the most complete object
+    const objects = data.filter(item => item && typeof item === 'object' && !Array.isArray(item));
+    if (objects.length > 0) {
+      const best = objects.reduce((prev, curr) => {
+        const prevScore = Object.keys(prev).length;
+        const currScore = Object.keys(curr).length;
+        return currScore > prevScore ? curr : prev;
+      });
+      return best;
+    }
+    return {
+      items: data,
+      error: 'Parsed array contained no receipt objects'
+    };
+  }
+
+  return data;
 }
 
 /**
@@ -112,6 +172,7 @@ function extractJsonObject(str) {
       if (start === -1) start = i;
       braceCount++;
     } else if (str[i] === '}') {
+      if (start === -1) continue;
       braceCount--;
       if (braceCount === 0 && start !== -1) {
         end = i + 1;
@@ -139,6 +200,7 @@ function extractJsonArray(str) {
       if (start === -1) start = i;
       braceCount++;
     } else if (str[i] === ']') {
+      if (start === -1) continue;
       braceCount--;
       if (braceCount === 0 && start !== -1) {
         end = i + 1;
@@ -263,40 +325,154 @@ function createFallbackData(fallbackText) {
 /**
  * Extract with Ollama
  */
-async function extractWithOllama(imageBase64) {
-  console.log('Secure Mode: Processing with Ollama...');
-  
-  const model = 'moondream';
-  
-  // Build prompt
-  const prompt = `${PROMPT}\n\nExtract all receipt data now. Return JSON only.`;
-  
+function parseReceiptText(ocrText) {
+  const text = (ocrText || '').replace(/\r/g, '').trim();
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  if (lines.length === 0) {
+    return createFallbackData(ocrText);
+  }
+
+  const result = {
+    vendorName: lines[0] || 'Unknown Vendor',
+    items: []
+  };
+
+  for (const line of lines) {
+    const telMatch = line.match(/\bTEL\.?\s*([+\d][\d\s.-]{5,})/i);
+    if (telMatch) result['TEL.'] = telMatch[1].replace(/\s+/g, '');
+
+    const pivaMatch = line.match(/\bP\.?\s*IVA\s*([A-Z0-9]+)/i);
+    if (pivaMatch) result['P.IVA'] = pivaMatch[1];
+
+    const totalMatch = line.match(/\bTOTALE\b[^\d]*([\d.,]+)/i);
+    if (totalMatch) result.total = normalizeMoney(totalMatch[1]);
+
+    const piecesMatch = line.match(/\bNUMERO\s+PEZZ[AI]\b[^\d]*([\d]+)/i);
+    if (piecesMatch) result.pieces = piecesMatch[1];
+
+    const dateTimeMatch = line.match(/\b(\d{2}[/-]\d{2}[/-]\d{2,4})\s+(\d{2}[-:]\d{2})/);
+    if (dateTimeMatch) {
+      result.date = normalizeDate(dateTimeMatch[1]);
+      result.time = dateTimeMatch[2].replace('-', ':');
+    } else {
+      const dateOnlyMatch = line.match(/\b(\d{2}[/-]\d{2}[/-]\d{2,4})\b/);
+      if (dateOnlyMatch) result.date = normalizeDate(dateOnlyMatch[1]);
+    }
+  }
+
+  return result;
+}
+
+function normalizeMoney(value) {
+  if (!value) return value;
+  return value.replace(/\./g, '').replace(',', '.');
+}
+
+function normalizeForMatch(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function normalizeDigits(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function isLikelyFromOcr(value, ocrText) {
+  if (value === null || value === undefined) return false;
+  const normalizedOcr = normalizeForMatch(ocrText);
+  if (!normalizedOcr) return false;
+
+  const normalizedValue = normalizeForMatch(value);
+  if (normalizedValue.length >= 3 && normalizedOcr.includes(normalizedValue)) {
+    return true;
+  }
+
+  const ocrDigits = normalizeDigits(ocrText);
+  const valueDigits = normalizeDigits(value);
+  if (valueDigits.length >= 3 && ocrDigits.includes(valueDigits)) {
+    return true;
+  }
+
+  return false;
+}
+
+function filterExtractionByOcr(extractionResult, ocrText) {
+  if (!extractionResult || typeof extractionResult !== 'object') return extractionResult;
+  if (!ocrText) return extractionResult;
+
+  const alwaysKeep = new Set(['rawText', 'rawTextLines']);
+  const filtered = {};
+
+  for (const [key, value] of Object.entries(extractionResult)) {
+    if (alwaysKeep.has(key)) {
+      filtered[key] = value;
+      continue;
+    }
+
+    if (key === 'items' && Array.isArray(value)) {
+      const filteredItems = value.filter(item => {
+        if (!item || typeof item !== 'object') return false;
+        return Object.values(item).some(itemValue => isLikelyFromOcr(itemValue, ocrText));
+      });
+      filtered.items = filteredItems;
+      continue;
+    }
+
+    if (typeof value === 'object' && value !== null) {
+      const nested = {};
+      for (const [nestedKey, nestedValue] of Object.entries(value)) {
+        if (isLikelyFromOcr(nestedValue, ocrText) || isLikelyFromOcr(nestedKey, ocrText)) {
+          nested[nestedKey] = nestedValue;
+        }
+      }
+      if (Object.keys(nested).length > 0) {
+        filtered[key] = nested;
+      }
+      continue;
+    }
+
+    if (isLikelyFromOcr(value, ocrText) || isLikelyFromOcr(key, ocrText)) {
+      filtered[key] = value;
+    }
+  }
+
+  return filtered;
+}
+
+async function extractWithOllamaFromText(ocrText) {
+  console.log('Secure Mode: Structuring OCR text with Ollama...');
+
+  const model = DEFAULT_TEXT_MODEL;
+  const prompt = `${PROMPT}\n\nOCR TEXT:\n${ocrText}\n\nExtract all receipt data now. Return JSON only.`;
+
   try {
     console.log('Calling Ollama API (generate endpoint)...');
-    
-    // Remove data URI prefix if present, as Ollama expects raw base64
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    
+
     const resp = await ollamaRequest('/api/generate', {
       model: model,
       prompt: prompt,
-      images: [base64Data],
       format: 'json',
       stream: false,
-      options: { num_predict: 1500, temperature: 0.1 }
+      options: { num_predict: 1400, temperature: 0.0 }
     }, 300000); // 300 seconds timeout
-    
+
     const text = resp.response || '';
     console.log('Response received, length:', text.length);
     console.log('Response preview:', text.substring(0, 300));
-    
-    // Normalize and validate the response
+
     return normalizeReceiptData(text, text);
-    
   } catch (err) {
     console.error('Ollama error:', err.message);
     throw new Error('Secure Mode failed: ' + err.message);
   }
 }
 
-module.exports = { extractWithOllama };
+module.exports = {
+  parseReceiptText,
+  extractWithOllamaFromText,
+  filterExtractionByOcr,
+  normalizeReceiptData,
+  createFallbackData
+};
