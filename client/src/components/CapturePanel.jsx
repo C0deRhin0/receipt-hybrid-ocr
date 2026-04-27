@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 
-export function CapturePanel({ onCapture, isLoading }) {
+export function CapturePanel({ onCapture, isLoading, previewImage, onReset }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [stream, setStream] = useState(null);
@@ -80,9 +80,15 @@ export function CapturePanel({ onCapture, isLoading }) {
       const reader = new FileReader();
       reader.onload = (e) => {
         onCapture(e.target.result);
+        stopCamera();
+        setUseCamera(false);
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleResetClick = () => {
+    if (onReset) onReset();
   };
 
   return (
@@ -137,6 +143,12 @@ export function CapturePanel({ onCapture, isLoading }) {
               />
             </div>
           </>
+        ) : previewImage ? (
+          <img
+            src={previewImage}
+            alt="Uploaded receipt preview"
+            style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '4px' }}
+          />
         ) : (
           <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
             <p>Or upload an image file</p>
@@ -152,14 +164,25 @@ export function CapturePanel({ onCapture, isLoading }) {
             </label>
           </div>
         )}
-
-        {isLoading && (
-          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(13, 17, 23, 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '16px' }}>
-            <div className="spinner"></div>
-            <div style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>Processing Image...</div>
-          </div>
-        )}
       </div>
+
+      {previewImage && !useCamera && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <label className="btn-secondary" style={{ display: 'inline-block', cursor: 'pointer', textAlign: 'center' }}>
+            Upload a new image
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleFileUpload}
+              style={{ display: 'none' }}
+              disabled={isLoading}
+            />
+          </label>
+          <button className="btn-secondary" onClick={handleResetClick} disabled={isLoading}>
+            Clear image
+          </button>
+        </div>
+      )}
     </div>
   );
 }
