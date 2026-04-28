@@ -71,7 +71,7 @@ try {
   // Fallback to HTTP
 }
 
-// Start Server - simplified, just start
+// Start HTTPS/SSL Server
 server.listen(PORT, HOST, () => {
   const protocol = isHttps ? 'https' : 'http';
   const localUrl = `${protocol}://localhost:${PORT}`;
@@ -87,13 +87,14 @@ Cloud Mode:   ${process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY !
 Secure Mode: Ollama @ http://localhost:11434
 `);
 
-  if (!isHttps) {
-    console.log(`
-⚠️  NOTE: Camera on phones needs HTTPS (certificates auto-created)
-`);
-  }
-
-  // Write PID file for scripts to track
-  const pidPath = path.join(__dirname, '../.server.pid');
-  fs.writeFileSync(pidPath, String(process.pid));
+  // Start HTTP fallback on port 5002 (for phones without cert support)
+  const HTTP_PORT = 5002;
+  const httpServer = http.createServer(app);
+  httpServer.listen(HTTP_PORT, HOST, () => {
+    console.log(`HTTP Fallback: http://${getNetworkIp()}:${HTTP_PORT} (no certs)`);
+    
+    // Write PID file for scripts to track
+    const pidPath = path.join(__dirname, '../.server.pid');
+    fs.writeFileSync(pidPath, String(process.pid));
+  });
 });
