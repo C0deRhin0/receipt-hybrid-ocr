@@ -35,16 +35,36 @@ router.post('/', async (req, res) => {
     let extractionResult;
     let lastError = null;
 
-    let ocrText = '';
+    let ocrResult = null;
     try {
-      ocrText = await extractTextFromImage(imageBase64);
+      ocrResult = await extractTextFromImage(imageBase64);
+      
+      // Handle both object and string returns (backwards compat)
+      let ocrText = '';
+      let ocrLines = [];
+      
+      if (ocrResult && typeof ocrResult === 'object' && ocrResult.rawText) {
+        ocrText = ocrResult.rawText;
+        ocrLines = ocrResult.rawTextLines || [];
+      } else if (typeof ocrResult === 'string') {
+        ocrText = ocrResult;
+        ocrLines = ocrResult.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+      }
+      
       if (!ocrText || ocrText.trim().length === 0) {
         throw new Error('OCR returned empty text');
       }
+      
+      // Return early - will be combined below
+      ocrResult = { text: ocrText, lines: ocrLines };
     } catch (err) {
       console.error('OCR Error:', err.message);
-      ocrText = '';
+      ocrResult = { text: '', lines: [] };
     }
+
+    // Use OCR result
+    const ocrText = ocrResult?.text || '';
+    const ocrLines = ocrResult?.lines || [];
 
     // Determine mode - default to secure (local) if not specified
     const effectiveMode = mode || 'secure';
@@ -114,13 +134,20 @@ router.post('/', async (req, res) => {
       extractionResult = createFallbackData(ocrText || '');
     }
 
-    extractionResult.rawText = ocrText || '';
-    extractionResult.rawTextLines = (ocrText || '').split('\n').map(line => line.trim()).filter(Boolean);
+    // USE LLM's cleaned rawTextLines for BOTH rawTextLines and rawText
+    const llmCleanLines = extractionResult?.rawTextLines;
+    const isClean = llmCleanLines && Array.isArray(llmCleanLines) && llmCleanLines.length > 0 && 
+      !llmCleanLines[0]?.includes('See ae') && 
+      !llmCleanLines[0]?.includes('===');
+    
+    // Use LLM cleaned lines - this goes to BOTH Raw OCR and Structured displays
+    const finalLines = isClean ? llmCleanLines : ((ocrText || '').split('\n').map(line => line.trim()).filter(Boolean));
+    const finalText = finalLines.join('\n');
+    
+    extractionResult.rawTextLines = finalLines;
+    extractionResult.rawText = finalText;
 
-    if (ocrText && extractionResult && typeof extractionResult === 'object') {
-      extractionResult = filterExtractionByOcr(extractionResult, ocrText);
-    }
-
+    // Return cleaned output
     return res.json(extractionResult);
   } catch (error) {
     clearTimeout(timeoutId);
