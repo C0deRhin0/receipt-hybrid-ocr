@@ -25,8 +25,9 @@ npm run start
 
 The server runs on **HTTPS by default** (for camera access on external devices).
 
-- **Local:** https://localhost:5001
-- **Network:** https://192.168.x.x:5001
+- **Local (HTTPS):** https://localhost:5001
+- **Network (HTTPS):** https://192.168.x.x:5001
+- **Fallback (HTTP):** http://192.168.x.x:5002
 
 > **Note:** Port 5001 is used because port 5000 may be occupied by other services.
 
@@ -35,11 +36,11 @@ The server runs on **HTTPS by default** (for camera access on external devices).
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `HOST` | No | 0.0.0.0 | Server bind address |
-| `PORT` | No | 5001 | Server port (5000 may be occupied) |
+| `PORT` | No | 5001 | Server port |
 | `ANTHROPIC_API_KEY` | Optional | - | Claude Vision API key (cloud mode) |
-| `ANTHROPIC_API_BASE_URL` | Optional | anthropic.com | Custom API endpoint (for company APIs) |
+| `ANTHROPIC_API_BASE_URL` | Optional | anthropic.com | Custom API endpoint |
 | `OLLAMA_BASE_URL` | No | http://localhost:11434 | Ollama server URL |
-| `OLLAMA_TEXT_MODEL` | No | llama3.2 | The local LLM used to structure OCR text |
+| `OLLAMA_TEXT_MODEL` | No | llama3.2:3b | Local LLM for structuring |
 | `GOOGLE_SHEETS_CREDENTIALS` | Optional | - | Service account JSON |
 | `GOOGLE_SHEET_ID` | Optional | - | Target spreadsheet ID |
 
@@ -48,7 +49,7 @@ The server runs on **HTTPS by default** (for camera access on external devices).
 To use your company's Anthropic-compatible API:
 
 ```bash
-echo "ANTHROPIC_API_KEY=your-key" > .env.local
+echo "ANTHROPIC_API_KEY=your-key" >> .env.local
 echo "ANTHROPIC_API_BASE_URL=https://api.company.com/v1" >> .env.local
 npm run start
 ```
@@ -64,19 +65,36 @@ npm run status  # Check server and Ollama status
 Example output:
 ```
 Receipt Hybrid OCR — NuecAI
-──────────────────────────────────
+───────────────────────────────────
 Local:    https://localhost:5001
-Network:  https://192.168.1.37:5001
-──────────────────────────────────
+Network:  https://192.168.11.191:5001
+───────────────────────────────────
 Cloud Mode:   ⚠️ Add API key to .env.local
 Secure Mode: Ollama @ http://localhost:11434
+HTTP Fallback: http://192.168.11.191:5002 (no certs)
 ```
 
-## 5. Secure Mode (Default - Local OCR & LLM Structuring)
+## 5. Secure Mode (Default - Local OCR & LLM)
 
-The app defaults to **Secure Mode** using local processing for privacy. No internet required after models are downloaded. The pipeline first extracts raw text using **tesseract.js**, then uses a local Ollama model (configured via `OLLAMA_TEXT_MODEL`) to structure the data into JSON.
+The app defaults to **Secure Mode** using local processing for privacy. No internet required after models are downloaded.
 
-### Install Ollama:
+### How It Works
+
+The processing pipeline has two stages:
+
+**Stage 1: Tesseract.js OCR**
+- Direct image-to-text extraction (no preprocessing currently active)
+- Returns raw text with OCR artifacts/errors
+
+**Stage 2: Local Ollama LLM**
+- Receives raw OCR output
+- Corrects common OCR errors (EET→SHELL, P08.57→P358.57)
+- Removes noise characters (===, ---, mmm, [i, etc.)
+- Extracts structured JSON data
+
+The LLM acts as the "last line of defense" - producing clean output for both the Raw OCR and Structured tabs.
+
+### Install Ollama
 
 ```bash
 # macOS
@@ -86,33 +104,32 @@ brew install ollama
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-### Install the Text Model:
+### Install the Text Model
 
 ```bash
 # Recommended text model for structuring OCR data
-ollama pull llama3.2
-
-# You can use a different model by setting OLLAMA_TEXT_MODEL in .env.local
+ollama pull llama3.2:3b
 ```
 
-### Start Ollama (if not auto-started):
+### Start Ollama (if not auto-started)
 
 ```bash
 ollama serve
 ```
 
-**Note:** The app will handle OCR locally using Tesseract and structure the text using your specified Ollama model. Processing typically takes ~5-15 seconds.
+**Note:** Processing typically takes ~5-15 seconds.
 
 ### Fallback Behavior
 
-If Secure Mode fails and you have an API key configured, the system automatically falls back to Cloud Mode. Conversely, if Cloud Mode fails, it attempts Secure Mode as backup.
+- If Secure Mode fails and you have an API key configured → falls back to Cloud Mode
+- If Cloud Mode fails → attempts Secure Mode as backup
 
 ## 6. Cloud Mode (Optional)
 
 For faster processing (~3-5 seconds), add your Anthropic API key:
 
 ```bash
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env.local
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env.local
 npm run start
 ```
 
@@ -120,30 +137,25 @@ The mode toggle in the UI lets you switch between Cloud and Secure modes. Your p
 
 ## 7. Camera on External Devices
 
+### Option 1: HTTPS (Port 5001) - Recommended
+
 The server runs on **HTTPS** automatically when certificates exist. This enables camera access on phones/tablets.
 
-### Setup (One-time):
+On Your Phone:
 
-```bash
-# Install mkcert
-brew install mkcert
+1. Navigate to `https://192.168.x.x:5001`
+2. Accept the certificate warning (one-time per device)
+3. Camera will now work
 
-# Setup local CA (requires admin)
-sudo mkcert -install
+### Option 2: HTTP Fallback (Port 5002)
 
-# Generate certificates for localhost and LAN IP
-mkcert $(hostname) localhost 127.0.0.1 192.168.1.37
+For devices that can't accept self-signed certificates:
+
+```
+http://192.168.x.x:5002
 ```
 
-Move the generated `.pem` files to `server/` directory.
-
-Certificates are auto-detected and HTTPS is enabled automatically.
-
-### On Your Phone:
-
-1. Navigate to `https://[YOUR-LAN-IP]:5001`
-2. Accept the certificate warning (one-time, per device)
-3. Camera will now work
+This provides the same functionality without HTTPS requirements.
 
 ## 8. Google Sheets Export
 
@@ -160,13 +172,14 @@ GOOGLE_SHEET_ID=your-sheet-id
 
 ### Demo Flow
 
-1. Open app at `https://localhost:5001` (or network URL)
+1. Open app at local or network URL
 2. **Toggle Mode:** Click the lock icon (Secure/Local) or cloud icon (Cloud)
 3. **Capture:** Use camera button or upload receipt image
-4. **Wait:** A processing overlay will appear over the preview image (~5-15 sec for local, ~3-5 sec for cloud)
-5. **View Data:** The parsed data appears in the Parsed Data panel
-6. **Toggle Structured/Raw:** Switch between AI-structured JSON tables or Raw OCR text extraction
-7. **Export:** Download CSV or push to Google Sheets
+4. **Wait:** A processing overlay will appear (~5-15 sec for local, ~3-5 sec for cloud)
+5. **View Data:** Toggle between:
+   - **Structured tab:** Clean parsed JSON data
+   - **Raw OCR tab:** Processed text (LLM-cleaned) - shows what the LLM produced
+6. **Export:** Download CSV or push to Google Sheets
 
 ### Mode Indicator
 
@@ -178,14 +191,15 @@ Your mode preference is saved between sessions.
 ## 10. Troubleshooting
 
 ### "Camera not working on phone"
-- Ensure you're using HTTPS (not HTTP)
+- Use HTTPS URL (`https://192.168.x.x:5001`)
 - Accept the certificate warning in your browser
+- Try HTTP fallback (`http://192.168.x.x:5002`)
 - Check that your phone is on the same network
 
 ### "Secure Mode timeout"
 - Ensure Ollama is running: `ollama serve`
 - Check text model is installed: `ollama list`
-- Try: `ollama pull llama3.2` or verify your `OLLAMA_TEXT_MODEL` value.
+- Try: `ollama pull llama3.2:3b`
 
 ### "Cloud Mode not working"
 - Verify API key in `.env.local`
@@ -197,23 +211,19 @@ Your mode preference is saved between sessions.
 - Change port in `.env.local`: `PORT=5002`
 
 ### "Extraction shows empty or wrong data"
-- **Secure Mode (Local)**: Ensure the receipt is clear. Tesseract.js may struggle with poor lighting, meaning the LLM gets bad input text. Toggle to **Raw OCR** to see exactly what text the LLM received.
+- **Secure Mode**: Ensure the receipt is clear. Toggle to "Raw OCR" to see processed text.
 - **Cloud Mode**: Ensure your API key is valid and has sufficient credits
 
-### "Fallback to raw text displayed"
-When the AI cannot extract structured data, you can toggle the UI to show:
-- The raw extracted text from the OCR pass (useful for debugging)
-
-This typically happens with:
-- Very complex receipt layouts
-- Poor image quality
-- Non-standard receipt formats
+### "Seeing OCR noise in Raw OCR tab"
+- The Raw OCR tab shows LLM-processed text (after error correction)
+- The Structured tab shows parsed JSON
+- Both display clean output - noise is removed by the LLM
 
 ## 11. Accuracy Comparison
 
 | Mode | Model Pipeline | Accuracy | Speed | Internet Required |
-|------|-------|----------|-------|-------------------|
-| Secure | Tesseract + Llama3.2 | ~70-80% | ~5-15s | No |
+|------|----------------|----------|-------|-------------------|
+| Secure | Tesseract + Llama3.2:3b | ~70-80% | ~5-15s | No |
 | Cloud | Claude Vision | ~95%+ | ~3-5s | Yes |
 
 ### Tips for Better Results
@@ -223,7 +233,7 @@ This typically happens with:
 - Ensure text is readable
 - Standard receipt formats work better
 
-**For Cloud Mode (Recommended for accuracy):**
+**For Cloud Mode:**
 - Add your Anthropic API key to `.env.local`
 - Much better at handling complex receipts
 
@@ -237,21 +247,27 @@ Extract receipt data from image.
 ```json
 {
   "imageBase64": "data:image/jpeg;base64,...",
-  "mode": "secure" // or "cloud"
+  "mode": "secure"
 }
 ```
 
 **Response:**
 ```json
 {
-  "vendorName": "Store Name",
-  "date": "2024-01-15",
-  "items": [
-    { "description": "Item 1", "quantity": 2, "unitPrice": 5.99 }
+  "vendorName": "SHELL TINAGO",
+  "date": "2026/04/12",
+  "time": "16:47:52",
+  "total": "P358.57",
+  "rawTextLines": [
+    "SHELL TINAGO",
+    "Camarines Sur PHL 4400",
+    "MERCHANT ID EFS201657018",
+    ...
   ],
-  "subtotal": 11.98,
-  "vat": 1.20,
-  "total": 13.18
+  "fields": {
+    "merchantId": "EFS201657018",
+    ...
+  }
 }
 ```
 
