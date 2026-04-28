@@ -1,0 +1,51 @@
+# Certificates (mkcert - DO NOT COMMIT)
+*.pem
+*-key.pem
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build
+dist/
+build/
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+server.log
+.server.pid
+npm-debug.log*
+
+# Models (local Ollama)
+~/.ollama/
+model-cache/
+
+# Local config (user-specific)
+.opencode/
+
+# Docs
+ROADMAP.md
+
+samples/
+outputs/
+.gitignore
+eng.traineddata
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Server files (Python/venv)
+server/
