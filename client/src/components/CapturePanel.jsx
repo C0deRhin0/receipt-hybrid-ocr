@@ -6,21 +6,57 @@ export function CapturePanel({ onCapture, isLoading, previewImage, onReset }) {
   const [stream, setStream] = useState(null);
   const [error, setError] = useState(null);
   const [useCamera, setUseCamera] = useState(false);
+  const [cameras, setCameras] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+
+  // Enumerate available cameras when camera mode is activated
+  useEffect(() => {
+    const getCameras = async () => {
+      try {
+        // First request permission to get access to device labels
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        
+        // After permission, enumerate devices (now with labels)
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        setCameras(videoDevices);
+        
+        if (videoDevices.length > 0 && !selectedDeviceId) {
+          setSelectedDeviceId(videoDevices[0].deviceId);
+        }
+      } catch (err) {
+        console.error('Error enumerating devices:', err);
+      }
+    };
+    if (useCamera) {
+      getCameras();
+    }
+  }, [useCamera]);
 
   useEffect(() => {
-    if (useCamera) {
+    if (useCamera && selectedDeviceId) {
       startCamera();
     } else {
       stopCamera();
     }
     return () => stopCamera();
-  }, [useCamera]);
+  }, [useCamera, selectedDeviceId]);
 
   const startCamera = async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
-      });
+      const constraints = {
+        video: {}
+      };
+      
+      // If a specific camera is selected, use its device ID
+      if (selectedDeviceId) {
+        constraints.video.deviceId = { exact: selectedDeviceId };
+      } else {
+        // Default to back/environment camera for mobile devices
+        constraints.video.facingMode = 'environment';
+      }
+      
+      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       setStream(mediaStream);
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
@@ -106,6 +142,31 @@ export function CapturePanel({ onCapture, isLoading, previewImage, onReset }) {
           </button>
         )}
       </div>
+
+      {useCamera && cameras.length > 0 && (
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <label style={{ fontSize: '14px', color: 'var(--text-muted)' }}>Camera:</label>
+          <select
+            value={selectedDeviceId}
+            onChange={(e) => setSelectedDeviceId(e.target.value)}
+            style={{
+              flex: 1,
+              padding: '8px',
+              borderRadius: '4px',
+              border: '1px solid var(--border)',
+              backgroundColor: 'var(--bg-card)',
+              color: 'var(--text)',
+              fontSize: '14px'
+            }}
+          >
+            {cameras.map((camera) => (
+              <option key={camera.deviceId} value={camera.deviceId}>
+                {camera.label || `Camera ${cameras.indexOf(camera) + 1}`}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {error && (
         <div style={{ 
