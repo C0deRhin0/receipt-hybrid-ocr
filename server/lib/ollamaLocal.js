@@ -2,46 +2,30 @@ const http = require('http');
 
 const DEFAULT_TEXT_MODEL = process.env.OLLAMA_TEXT_MODEL || 'llama3.2:3b';
 
-const PROMPT = `You are a receipt data extraction system.
-You will be given OCR text from a receipt image.
+const PROMPT = `You are an OCR receipt processor.
 
-CRITICAL RULES:
-1. Extract ONLY values that appear in the OCR text. Do NOT make up data.
-2. Preserve original labels/fields when present (e.g., "P.IVA", "TEL.").
-3. Also normalize common fields when clear:
-   - vendorName, date, time, total, subtotal, vat, tax, pieces
-4. If the text does not clearly contain line items, do NOT invent them. Leave items as an empty array.
-5. For each OCR line, attempt to map it to a logical category:
-   - vendorName (top of receipt / header)
-   - contact (phone, address)
-   - tax (VAT / tax ID)
-   - totals (subtotal, total, tax)
-   - meta (operator, register, receipt id, etc.)
-   Place these in a "sections" object with arrays of lines.
-6. If something is unclear, keep it in a generic "fields" object with key/value pairs exactly as seen.
-7. Return ONLY valid JSON. No explanations, no markdown.
+INPUT: Noisy OCR text from a receipt image.
+OUTPUT: Clean JSON.
 
-Output format example (dynamic JSON):
+MANDATORY JSON FORMAT:
 {
-  "vendorName": "Store Name",
-  "date": "2023-01-01",
-  "time": "14:24",
-  "total": "449.00",
-  "P.IVA": "04133250961",
-  "TEL": "0257505142",
-  "items": [],
-  "sections": {
-    "header": ["Store Name", "Address line"],
-    "contact": ["TEL. ..."],
-    "tax": ["P.IVA ..."],
-    "totals": ["TOTALE ..."],
-    "meta": ["OP. 1 0000", "REPO! 449,00"]
-  },
-  "fields": {
-    "OP.": "1",
-    "REP01": "0000"
-  }
-}`;
+  "vendorName": "SHELL TINAGO",
+  "date": "2026/04/12",
+  "time": "16:47:52",
+  "total": "P358.57",
+  "rawTextLines": ["LINE1", "LINE2", ...],
+  "fields": {"merchantId": "...", "terminalId": "...", ...}
+}
+
+REQUIRED: rawTextLines must be an array of clean strings - one per receipt line.
+NO "==", NO "——", NO "mmm", NO "[i", NO "See ae", NO "sme".
+
+Fix common errors: EET→SHELL, P08.57→P358.57, 0S→OS, P2-All→P2-A11
+
+Clean rawTextLines example:
+["SHELL TINAGO","PANGANIBAN DRIVE TINAGO NAGA","Camarines Sur PHL 4400","MERCHANT ID EFS201657018","TERMINAL ID 30032138","PAYMENT CHANNEL Card","CARD TYPE MASTERCARD","CARD NO 5535","TRANSACTION TYPE SALE","BATCH NO 000894","TRACE NO 007422","REFERENCE NO 610206664583","TRANSACTION NO BB1087493845","APPR. CODE 478157","DATE/TIME 2026/04/12 16:47:52","APPROVED","SALE AMOUNT P358.57","ARQC B603FD41FDE55B93","ATC 001C","APP LABEL Debit Mastercard","AID A0000000041010","RETAIN THIS COPY FOR YOUR RECORDS","Customer COPY","OS 3.0.57","MODEL P2-A11"]
+
+Be perfect. Return ONLY valid JSON.`;
 
 // Use localhost:11434
 const OLLAMA_BASE_URL = 'http://localhost:11434';
