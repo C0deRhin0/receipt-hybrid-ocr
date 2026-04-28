@@ -19,9 +19,10 @@
     "dotenv": "latest",
     "express": "latest",
     "googleapis": "latest",
-    "tesseract.js": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "sharp": "^0.34.5",
+    "tesseract.js": "latest"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "latest",
