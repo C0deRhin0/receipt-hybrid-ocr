@@ -78,8 +78,8 @@
 #### Note on Preprocessing
 
 The codebase includes optional preprocessing modules that are NOT currently active:
-- `server/lib/preprocess.js` - Sharp-based image enhancement
-- `server/preprocess.py` - OpenCV-based preprocessing (requires venv)
+- `backend/lib/preprocess.js` - Sharp-based image enhancement
+- `backend/preprocess.py` - OpenCV-based preprocessing (requires venv)
 
 These were tested but found that direct Tesseract + LLM cleaning produced better results for the receipts tested. Future work could re-enable these for different receipt types.
 
