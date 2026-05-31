@@ -5,7 +5,8 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PID_FILE="$ROOT_DIR/.server.pid"
 LOG_FILE="$ROOT_DIR/server.log"
-CERT_DIR="$ROOT_DIR/server"
+CERT_DIR="$ROOT_DIR/backend"
+FRONTEND_DIST_DIR="$ROOT_DIR/frontend/dist"
 
 load_env() {
   if [ -f "$ROOT_DIR/.env" ]; then
@@ -88,7 +89,7 @@ check_and_renew_cert() {
   if [ $? -eq 0 ]; then
     echo "Certificate generated successfully."
     
-    # Move new certs to server folder if not already there
+    # Move new certs to backend folder if not already there
     NEW_CERTS=$(ls "$ROOT_DIR"/*"$CURRENT_IP"*.pem 2>/dev/null || true)
     if [ -n "$NEW_CERTS" ]; then
       for cert in $NEW_CERTS; do
@@ -145,9 +146,9 @@ fi
 echo "Checking certificates..."
 check_and_renew_cert
 
-# Build client if needed
-if [ ! -d "$ROOT_DIR/dist" ]; then
-  echo "Building client..."
+# Build frontend if needed
+if [ ! -d "$FRONTEND_DIST_DIR" ]; then
+  echo "Building frontend..."
   (cd "$ROOT_DIR" && npm run build)
 fi
 
@@ -155,7 +156,7 @@ touch "$LOG_FILE"
 
 # Start the server
 cd "$ROOT_DIR"
-node server/index.js >> "$LOG_FILE" 2>&1 &
+node backend/index.js >> "$LOG_FILE" 2>&1 &
 PID=$!
 echo "$PID" > "$PID_FILE"
 
