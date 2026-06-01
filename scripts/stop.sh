@@ -38,7 +38,7 @@ fi
 
 # Ensure all dangling server processes are killed to prevent EADDRINUSE
 echo "Checking for dangling Node.js server processes..."
-pkill -f "node server/index.js" 2>/dev/null || true
+pkill -f "node backend/index.js" 2>/dev/null || true
 
 # Stop Ollama (optional - ask user)
 echo ""
