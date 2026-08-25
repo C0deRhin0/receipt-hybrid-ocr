@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Banner } from './components/Banner';
 import { SecureModeToggle } from './components/SecureModeToggle';
 import { CapturePanel } from './components/CapturePanel';
@@ -7,19 +7,18 @@ import { ExportBar } from './components/ExportBar';
 import { encodeBase64 } from './utils/encode';
 
 function App() {
-  const [secureMode, setSecureMode] = useState(false);
+  const [secureMode, setSecureMode] = useState(() => {
+    try {
+      const savedMode = localStorage.getItem('secureMode');
+      return savedMode === null ? true : savedMode === 'true';
+    } catch {
+      return true;
+    }
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
   const [error, setError] = useState(null);
   const [previewImage, setPreviewImage] = useState(null);
-
-  // Load saved mode on mount
-  useEffect(() => {
-    const savedMode = localStorage.getItem('secureMode');
-    if (savedMode !== null) {
-      setSecureMode(savedMode === 'true');
-    }
-  }, []);
 
   // Handle mode change - clear previous results
   const handleModeChange = (newMode) => {
