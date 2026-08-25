@@ -1,198 +1,118 @@
 const { createWorker } = require('tesseract.js');
+const { preprocessImageBuffer } = require('./preprocess');
 
 let workerPromise;
 
+function getConfig() {
+  return {
+    languages: process.env.OCR_LANGUAGES || 'eng',
+    // Automatic layout segmentation handles photographed receipts with a
+    // surrounding background or watermark much better than a forced text block.
+    defaultPsm: process.env.OCR_PSM_DEFAULT || '3',
+    retryPsm: process.env.OCR_PSM_RETRY || '6',
+    // Below this level, a different segmentation pass is often worthwhile.
+    // It catches otherwise clear but low-contrast/sparse receipts without
+    // paying for two passes on strong scans.
+    minConfidence: Number.parseInt(process.env.OCR_MIN_CONFIDENCE || '70', 10) || 70
+  };
+}
+
 async function getWorker() {
   if (!workerPromise) {
-    workerPromise = (async () => {
-      const worker = await createWorker('eng');
-      // PSM 6 works well for most receipts
-      await worker.setParameters({
-        tessedit_pageseg_mode: '6',
-      });
-      return worker;
-    })();
+    workerPromise = createWorker(getConfig().languages).catch(error => {
+      workerPromise = undefined;
+      throw error;
+    });
   }
-
   return workerPromise;
 }
 
 function stripDataUrl(base64) {
   if (!base64) return '';
   const commaIndex = base64.indexOf(',');
-  if (commaIndex !== -1) {
-    return base64.substring(commaIndex + 1);
-  }
-  return base64;
+  return commaIndex === -1 ? base64 : base64.substring(commaIndex + 1);
+}
+
+function toLines(data) {
+  return (data.lines?.length ? data.lines : String(data.text || '').split('\n').map(text => ({ text })))
+    .map(line => String(line.text || '').trim())
+    .filter(Boolean);
+}
+
+function summarize(data) {
+  const words = (data.words || [])
+    .filter(word => String(word.text || '').trim())
+    .map(word => ({
+      text: String(word.text).trim(),
+      confidence: Number(word.confidence || 0),
+      bbox: word.bbox || null
+    }));
+  const confidence = words.length
+    ? Math.round(words.reduce((sum, word) => sum + word.confidence, 0) / words.length)
+    : Math.round(Number(data.confidence || 0));
+
+  return { text: String(data.text || '').trim(), lines: toLines(data), words, confidence };
+}
+
+function hasFragmentedNumericLines(lines) {
+  // Multiple number-only lines in an otherwise text-heavy document usually
+  // mean the automatic layout pass detached labels from their values. This is
+  // a generic signal for trying the alternate segmentation mode; it is not a
+  // receipt-specific vocabulary rule.
+  const numericOnly = lines.filter(line => /^[#€$£]?\s*\d[\d ,.-]*$/.test(String(line).trim())).length;
+  return lines.length >= 6 && numericOnly >= 2;
+}
+
+async function recognize(worker, imageBuffer, psm) {
+  await worker.setParameters({ tessedit_pageseg_mode: String(psm) });
+  const { data } = await worker.recognize(imageBuffer);
+  return summarize(data || {});
 }
 
 /**
- * Post-process OCR output to fix common misreads
- * Uses a phased approach for reliable corrections
- */
-function postProcessOCR(text) {
-  if (!text) return '';
-  
-  let corrected = text;
-  
-  // Phase 0: Remove noise and OCR artifacts FIRST (before splitting into lines)
-  const noiseCleanups = [
-    // Remove box-drawing and separator characters completely
-    [/[\─\-=]{2,}/g, ''],
-    [/[═]{2,}/g, ''],
-    [/[▄▀█]/g, ''],
-    // Remove weird brackets and symbols
-    [/\[[\[\](){}]/g, ''],
-    [/[\]\[\(){}]\]/g, ''],
-    [/[「」『』]/g, ''],
-    // Remove copyright and special chars
-    [/©/g, ''],
-    [/\[\[/g, ''],
-    // Remove pipe noise
-    [/\s*\|\s*/g, ''],
-    // Clean up partial reads at line start
-    [/^\[i.*/gm, ''],
-    [/^mths.*/gm, ''],
-    [/^Co ee.*/gm, ''],
-    [/^BM /gm, ''],
-    [/^RE: /gm, ''],
-    [/^"I /gm, ''],
-    [/^" /gm, ''],
-    // Fix "Po" → "P" (money prefix common misread) - handle P08.57 -> P358.57
-    // First pass: remove leading 0 in P0 numbers (but need context - do after split)
-    [/P[oO0]/g, 'P'],
-    // Fix EET → SHELL (very common misread in Tesseract)
-    [/EET (SHELL)/g, 'SHELL'],
-    [/^EET /gm, 'SHELL '],
-    [/EET$/gm, 'SHELL'],
-    // Fix "See .e " appearing wrongly  
-    [/See .e /g, ' '],
-    [/See /g, ''],
-    // Fix P2-All misreads  
-    [/P2-All/gi, 'P2-A11'],
-    // Fix "RR" → remove (noise prefix)
-    [/^RR /gm, ''],
-    // Fix "ARP" → "APP"  
-    [/^ARP /gm, 'APP '],
-    // Fix "0S" → "OS" (common misread)
-    [/0S:/gi, 'OS:'],
-    // Clean up extra spaces
-    [/\s+/g, ' '],
-    [/\n\s*\n/g, '\n'],
-  ];
-  
-  for (const [pattern, replacement] of noiseCleanups) {
-    corrected = corrected.replace(pattern, replacement);
-  }
-  
-  // Phase 1: Specific multi-character corrections
-  const specificPatterns = [
-    // PEZZ | i → PEZZI
-    [/PEZZ\s*\|\s*i/gi, 'PEZZI'],
-    [/PEZZ\s*\|/gi, 'PEZZI'],
-    // REP variations
-    [/REP\s*0\s*1/gi, 'REP01'],
-    [/REPO!/g, 'REP01'],
-    // OP.1 variations
-    [/OP\.\s*1/g, 'OP.1'],
-    // TOTALE
-    [/T0TALE/g, 'TOTALE'],
-  ];
-  
-  // Phase 2: Generic corrections  
-  const genericCorrections = [
-    // Pipe → I
-    [/(\w)\|(\w)/g, '$1I$2'],
-    [/\|\s*/g, ''],
-    // NF fixes
-    [/^AF /gm, 'NF '],
-    [/^PF /gm, 'NF '],
-    // C/0 → C/O
-    [/C\/0/g, 'C/O'],
-    // Clean spaces
-    [/\s\s+/g, ' '],
-  ];
-  
-  for (const [pattern, replacement] of specificPatterns) {
-    corrected = corrected.replace(pattern, replacement);
-  }
-  
-  for (const [pattern, replacement] of genericCorrections) {
-    corrected = corrected.replace(pattern, replacement);
-  }
-  
-  // NOW split into lines and clean each line individually
-  const lines = corrected.split('\n')
-    .map(l => l.trim())
-    .filter(l => l.length > 0 && !l.match(/^[=\-─~]+$/));
-  
-  // Per-line cleanup for amounts like P08.57 that might be P358.57
-  const cleanedLines = lines.map(line => {
-    // Fix P08.57 type patterns - check context
-    if (line.match(/^P0\d+\.\d+$/)) {
-      // This looks like a misread amount - don't fix automatically
-      // Let LLM handle the correction
-    }
-    // Remove any remaining "——", "==", "__" at ends
-    line = line.replace(/[\-=]+$/g, '');
-    line = line.replace(/^[\-=]+/g, '');
-    return line.trim();
-  })
-  .filter(l => l.length > 0);
-  
-  return cleanedLines.join('\n');
-}
-
-/**
- * Post-process individual line
- */
-function postProcessLine(lineText) {
-  return postProcessOCR(lineText);
-}
-
-/**
- * Direct Tesseract OCR with post-processing
- * Returns both raw text and line-by-line array
+ * Literal OCR only. Semantic correction belongs to the evidence-aware
+ * reconciliation layer; raw OCR must remain auditable and unchanged.
  */
 async function extractTextFromImage(imageBase64) {
-  const worker = await getWorker();
   const cleaned = stripDataUrl(imageBase64);
+  if (!cleaned || !/^[A-Za-z0-9+/=\s]+$/.test(cleaned)) {
+    const error = new Error('Image must be valid base64 data');
+    error.statusCode = 400;
+    throw error;
+  }
+
   const imageBuffer = Buffer.from(cleaned, 'base64');
+  if (!imageBuffer.length) throw new Error('Image is empty');
 
-  console.log('Running OCR...');
-  
-const { data } = await worker.recognize(imageBuffer);
-  
-  console.log('OCR complete');
-  
-  if (!data || !data.text) {
-    return '';
+  const worker = await getWorker();
+  const config = getConfig();
+  let best = await recognize(worker, imageBuffer, config.defaultPsm);
+  let usedEnhancedRetry = false;
+
+  // A second pass costs CPU, so only use it for a weak first result.
+  if (best.confidence < config.minConfidence || best.lines.length < 2 || hasFragmentedNumericLines(best.lines)) {
+    const enhanced = await preprocessImageBuffer(imageBuffer);
+    const retry = await recognize(worker, enhanced, config.retryPsm);
+    usedEnhancedRetry = true;
+    if (retry.confidence > best.confidence || (retry.confidence === best.confidence && retry.text.length > best.text.length)) {
+      best = retry;
+    }
   }
 
-// Use line-by-line from Tesseract (preserves receipt layout)
-  let rawTextLines = [];
-  
-  if (data.lines && data.lines.length > 0) {
-    // Get lines from Tesseract's detected lines
-    rawTextLines = data.lines
-      .map(line => line.text.trim())
-      .filter(text => text.length > 0);
-  } else {
-    // Fallback: split by newlines
-    rawTextLines = data.text.split('\n').map(s => s.trim()).filter(s => s.length > 0);
-  }
-
-  // Post-process each line individually (preserves line structure)
-  const postProcessedLines = rawTextLines.map(line => postProcessLine(line));
-  
-  // Join for backwards compatibility
-  const correctedText = postProcessedLines.join('\n');
-  
-  // Return object with both formats
   return {
-    rawText: correctedText,
-    rawTextLines: postProcessedLines
+    rawText: best.text,
+    rawTextLines: best.lines,
+    words: best.words,
+    confidence: best.confidence,
+    usedEnhancedRetry
   };
 }
 
-module.exports = { extractTextFromImage };
+async function terminateWorker() {
+  if (!workerPromise) return;
+  const worker = await workerPromise;
+  await worker.terminate();
+  workerPromise = undefined;
+}
+
+module.exports = { extractTextFromImage, stripDataUrl, terminateWorker };
