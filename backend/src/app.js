@@ -8,8 +8,9 @@ function createApp() {
   const app = express();
 
   app.use(cors());
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  // Base64 adds roughly one third overhead; keep requests bounded on 8 GB hosts.
+  app.use(express.json({ limit: '14mb' }));
+  app.use(express.urlencoded({ limit: '14mb', extended: true }));
 
   app.use('/api/extract', extractRoute);
   app.use('/api/sheets', sheetsRoute);

@@ -30,6 +30,11 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'No image provided' });
     }
 
+    if (mode && !['secure', 'secure-fast', 'cloud'].includes(mode)) {
+      clearTimeout(timeoutId);
+      return res.status(400).json({ error: 'Unsupported extraction mode' });
+    }
+
     const extractionResult = await extractReceiptData({ imageBase64, mode });
 
     clearTimeout(timeoutId);
