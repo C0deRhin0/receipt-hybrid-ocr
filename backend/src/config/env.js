@@ -16,7 +16,10 @@ function getRuntimeConfig() {
   return {
     host: process.env.HOST || '0.0.0.0',
     port: process.env.PORT || 5001,
-    cloudModeReady: hasCloudModeCredentials()
+    cloudModeReady: hasCloudModeCredentials(),
+    localScanConcurrency: Math.max(1, Number.parseInt(process.env.LOCAL_SCAN_CONCURRENCY || '1', 10) || 1),
+    ocrLanguages: process.env.OCR_LANGUAGES || 'eng',
+    visionModel: process.env.VISION_MODEL || 'granite3.2-vision:2b'
   };
 }
 

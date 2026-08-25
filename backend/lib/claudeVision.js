@@ -1,8 +1,8 @@
 const Anthropic = require('@anthropic-ai/sdk');
 
-const PROMPT = `Extract ALL details from this receipt.
-Extract all key-value pairs you can identify. Do NOT use a fixed schema. Name the keys based on what is on the receipt (e.g. "Merchant", "Date", "Tax ID", "Subtotal", "Total").
-If there is a list of items purchased, extract them as an array of objects under an 'items' key.
+const PROMPT = `Extract only clearly visible details from this document.
+Use dynamic keys based on the document; do not use a fixed receipt schema and do not infer missing values.
+If there is a readable table or list, return it as an array of objects under 'items'.
 Return ONLY valid JSON.`;
 
 /**
