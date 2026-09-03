@@ -4,6 +4,7 @@ const { prepareImageBuffer, prepareOcrImageBuffer } = require('../../lib/preproc
 const { extractWithVision } = require('../../lib/ollamaVision');
 const { extractWithText } = require('../../lib/ollamaText');
 const { hasCloudModeCredentials, getRuntimeConfig } = require('../config/env');
+const { extractionCache, createExtractionCacheKey } = require('./extraction-cache');
 
 let activeJobs = 0;
 const waitingJobs = [];
@@ -242,8 +243,40 @@ async function extractReceiptData({ imageBase64, mode }) {
     throw error;
   }
   const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',').pop() : imageBase64;
-  if (mode === 'cloud') return extractCloud(cleanBase64);
-  return extractLocal(cleanBase64, mode !== 'secure-fast');
+  const effectiveMode = mode || 'secure';
+  const cacheConfig = getRuntimeConfig();
+  const cacheKey = createExtractionCacheKey(cleanBase64, effectiveMode);
+
+  if (cacheConfig.extractionCacheEnabled) {
+    const cached = extractionCache.get(cacheKey);
+    if (cached) {
+      cached.processing = {
+        ...cached.processing,
+        cache: { hit: true, storage: 'memory' }
+      };
+      return cached;
+    }
+  }
+
+  const result = effectiveMode === 'cloud'
+    ? await extractCloud(cleanBase64)
+    : await extractLocal(cleanBase64, effectiveMode !== 'secure-fast');
+  result.processing = {
+    ...result.processing,
+    cache: { hit: false, storage: cacheConfig.extractionCacheEnabled ? 'memory' : 'disabled' }
+  };
+
+  if (cacheConfig.extractionCacheEnabled) {
+    extractionCache.set(cacheKey, result, {
+      ttlMs: cacheConfig.extractionCacheTtlMs,
+      maxEntries: cacheConfig.extractionCacheMaxEntries
+    });
+  }
+  return result;
 }
 
-module.exports = { extractReceiptData, normalizeVisionResult, extractDeterministicFields, runLocalJob };
+function clearExtractionCache() {
+  extractionCache.clear();
+}
+
+module.exports = { extractReceiptData, normalizeVisionResult, extractDeterministicFields, runLocalJob, clearExtractionCache };

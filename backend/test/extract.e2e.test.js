@@ -3,7 +3,11 @@ const fs = require('node:fs');
 const http = require('node:http');
 const test = require('node:test');
 const { parseJson } = require('../lib/ollamaVision');
-const { normalizeVisionResult, extractDeterministicFields } = require('../src/services/receipt-extraction.service');
+const {
+  normalizeVisionResult,
+  extractDeterministicFields,
+  clearExtractionCache
+} = require('../src/services/receipt-extraction.service');
 
 function listen(server) {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
@@ -30,11 +34,13 @@ function postJson(port, body) {
 }
 
 test('secure extraction performs real OCR and consumes a local text-structuring response', { timeout: 120000 }, async () => {
+  let structuringRequests = 0;
   const visionServer = http.createServer((request, response) => {
     let requestBody = '';
     request.on('data', chunk => { requestBody += chunk; });
     request.on('end', () => {
       const payload = JSON.parse(requestBody);
+      structuringRequests += 1;
       assert.equal(request.url, '/api/chat');
       assert.equal(payload.messages[0].images, undefined);
       response.setHeader('Content-Type', 'application/json');
@@ -49,6 +55,10 @@ test('secure extraction performs real OCR and consumes a local text-structuring 
   process.env.OLLAMA_BASE_URL = `http://127.0.0.1:${visionPort}`;
   process.env.VISION_MODEL = 'test-vision';
   process.env.LOCAL_SCAN_CONCURRENCY = '1';
+  process.env.EXTRACTION_CACHE_ENABLED = 'true';
+  process.env.EXTRACTION_CACHE_TTL_SECONDS = '3600';
+  process.env.EXTRACTION_CACHE_MAX_ENTRIES = '10';
+  clearExtractionCache();
 
   const { createApp } = require('../src/app');
   const { terminateWorker } = require('../lib/ocr');
@@ -62,7 +72,15 @@ test('secure extraction performs real OCR and consumes a local text-structuring 
     assert.equal(result.body.structured.fields.merchant.value, 'CITY OF FALMOUTH');
     assert.ok(result.body.rawOcr.text.includes('CITY OF FALMOUTH'));
     assert.ok(result.body.rawOcr.confidence > 0);
+    assert.equal(result.body.processing.cache.hit, false);
+
+    const cachedResult = await postJson(appPort, { imageBase64, mode: 'secure' });
+    assert.equal(cachedResult.status, 200);
+    assert.equal(cachedResult.body.processing.cache.hit, true);
+    assert.equal(cachedResult.body.structured.fields.merchant.value, 'CITY OF FALMOUTH');
+    assert.equal(structuringRequests, 1);
   } finally {
+    clearExtractionCache();
     await close(appServer);
     await close(visionServer);
     await terminateWorker();
