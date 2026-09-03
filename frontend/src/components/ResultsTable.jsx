@@ -7,6 +7,7 @@ function displayValue(value) {
 
 export function ResultsTable({ data, isLoading }) {
   const [viewMode, setViewMode] = useState('structured');
+  const [showWarnings, setShowWarnings] = useState(false);
   if (!data) {
     return <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '300px', color: 'var(--text-muted)' }}>
       {isLoading ? '' : 'No document data parsed yet. Scan or upload to see results.'}
@@ -35,9 +36,6 @@ export function ResultsTable({ data, isLoading }) {
 
       {viewMode === 'structured' && (
         <>
-          {warnings.length > 0 && <div className="card" style={{ border: '1px solid var(--danger)', color: 'var(--text-muted)' }}>
-            {warnings.map((warning, index) => <div key={index}>⚠ {warning}</div>)}
-          </div>}
           {Object.keys(fields).length > 0 ? <div className="card" style={{ backgroundColor: 'var(--bg-page)' }}>
             {Object.entries(fields).map(([key, field]) => {
               const value = field && typeof field === 'object' && 'value' in field ? field.value : field;
@@ -53,6 +51,25 @@ export function ResultsTable({ data, isLoading }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}><thead><tr>{itemKeys.map(key => <th key={key} style={{ padding: '10px 8px' }}>{key}</th>)}</tr></thead><tbody>{items.map((item, index) => <tr key={index}>{itemKeys.map(key => <td key={key} style={{ padding: '10px 8px' }}>{displayValue(item[key])}</td>)}</tr>)}</tbody></table>
           </div>}
         </>
+      )}
+
+      {warnings.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-start' }}>
+          <button
+            className="btn-secondary"
+            type="button"
+            aria-expanded={showWarnings}
+            aria-controls="extraction-warnings"
+            onClick={() => setShowWarnings(current => !current)}
+          >
+            {showWarnings ? 'Hide' : 'Show'} warnings &amp; errors ({warnings.length})
+          </button>
+          {showWarnings && (
+            <div id="extraction-warnings" className="card" style={{ width: '100%', border: '1px solid var(--danger)', color: 'var(--text-muted)' }}>
+              {warnings.map((warning, index) => <div key={index}>⚠ {warning}</div>)}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
